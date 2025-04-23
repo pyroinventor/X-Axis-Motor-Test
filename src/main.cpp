@@ -21,9 +21,9 @@ const long MAX_POSITION = 112000; // Maximum allowed position in steps (560mm)
 const long MIN_POSITION = 0;      // Minimum allowed position in steps
 
 // Motion Parameters
-const int STEP_DELAY_US = 200; // Microseconds between steps (controls speed)
-const bool CLOCKWISE = false;  // Direction definition
-const bool COUNTER_CLOCKWISE = true;
+const int STEP_DELAY_US = 200;        // Microseconds between steps (controls speed)
+const bool CLOCKWISE = true;          // Changed from false to true
+const bool COUNTER_CLOCKWISE = false; // Changed from true to false
 
 const int MIN_STEP_DELAY = 100;  // Minimum microseconds between steps (max speed)
 const int MAX_STEP_DELAY = 2000; // Maximum microseconds between steps (start speed)
@@ -34,6 +34,9 @@ const float STEPS_PER_MM = 200.0; // 2000 steps / 10mm = 200 steps/mm
 const float MAX_POSITION_MM = MAX_POSITION / STEPS_PER_MM;
 const float MIN_POSITION_MM = MIN_POSITION / STEPS_PER_MM;
 
+// Add at the top with other constants
+const int DEBOUNCE_DELAY = 50; // Increased debounce time to 50ms
+
 void setup()
 {
   Serial.begin(115200);
@@ -41,11 +44,15 @@ void setup()
   // Configure motor control pins
   pinMode(STEP_PIN, OUTPUT);
   pinMode(STEP_PIN_N, OUTPUT);
-  pinMode(DIR_PIN, OUTPUT);
-  pinMode(DIR_PIN_N, OUTPUT);
+  pinMode(DIR_PIN, OUTPUT_OPEN_DRAIN);   // Changed to open-drain with pullup
+  pinMode(DIR_PIN_N, OUTPUT_OPEN_DRAIN); // Changed to open-drain with pullup
   pinMode(EN_PIN, OUTPUT);
   pinMode(EN_PIN_N, OUTPUT);
-  pinMode(LIMIT_SW, INPUT_PULLUP); // Enable internal pullup for NC switch
+  pinMode(LIMIT_SW, INPUT_PULLUP); // Enable internal pullup resistor
+
+  // Enable pull-up resistors for direction pins
+  digitalWrite(DIR_PIN, HIGH);   // Enable internal pullup
+  digitalWrite(DIR_PIN_N, HIGH); // Enable internal pullup
 
   // Initialize pins (differential signals are complementary)
   digitalWrite(STEP_PIN, LOW);
@@ -63,19 +70,47 @@ void setup()
   Serial.println("R: Rotate counter-clockwise 1 revolution");
   Serial.println("H: Home axis"); // Add to command list
   Serial.println("P: Report current position");
+  Serial.println("G<num>: Go to position in mm (e.g. G200)");
 }
 
-// Add this function to check limit switch
+// Replace the existing isLimitTriggered function
 bool isLimitTriggered()
 {
-  return digitalRead(LIMIT_SW) == HIGH; // Switch is NC, so HIGH means triggered
+  static bool lastState = false;
+  static unsigned long lastDebounceTime = 0;
+
+  // For NC switch, LOW means triggered (switch is opened)
+  bool currentState = digitalRead(LIMIT_SW) == LOW;
+
+  // If the state changed, reset debounce timer
+  if (currentState != lastState)
+  {
+    lastDebounceTime = millis();
+    lastState = currentState;
+  }
+
+  // Only accept the reading if it's been stable for the debounce delay
+  if ((millis() - lastDebounceTime) > DEBOUNCE_DELAY)
+  {
+    return currentState;
+  }
+
+  return false; // Default to not triggered if still debouncing
 }
 
 void setDirection(bool clockwise)
 {
-  digitalWrite(DIR_PIN, clockwise ? HIGH : LOW);
-  digitalWrite(DIR_PIN_N, clockwise ? LOW : HIGH); // Complementary signal
-  delayMicroseconds(10);                           // Allow direction signal to settle
+  if (clockwise)
+  {
+    digitalWrite(DIR_PIN, HIGH);
+    digitalWrite(DIR_PIN_N, LOW);
+  }
+  else
+  {
+    digitalWrite(DIR_PIN, LOW);
+    digitalWrite(DIR_PIN_N, HIGH);
+  }
+  delayMicroseconds(10);
 }
 
 void step()
@@ -109,11 +144,14 @@ int calculateStepDelay(int currentStep, int totalSteps)
 
 void rotateWithAccel(bool clockwise, int steps)
 {
+  // Debug output
+  Serial.print("Direction: ");
+  Serial.println(clockwise ? "CLOCKWISE" : "COUNTER_CLOCKWISE");
+
   // Only check limits if we're homed
   if (isHomed)
   {
-    // Invert the position calculation logic since CLOCKWISE is defined as false
-    long targetPosition = currentPosition + (clockwise ? -steps : steps);
+    long targetPosition = currentPosition + (clockwise ? steps : -steps);
     if (targetPosition > MAX_POSITION || targetPosition < MIN_POSITION)
     {
       Serial.println("Error: Movement would exceed limits");
@@ -121,7 +159,9 @@ void rotateWithAccel(bool clockwise, int steps)
     }
   }
 
+  // Set direction before movement
   setDirection(clockwise);
+  delayMicroseconds(50); // Added delay for direction change to settle
 
   for (int i = 0; i < steps; i++)
   {
@@ -135,14 +175,13 @@ void rotateWithAccel(bool clockwise, int steps)
     int stepDelay = calculateStepDelay(i, steps);
     step();
 
-    // Update position tracking with inverted logic
     if (isHomed)
     {
-      currentPosition += (clockwise ? -1 : 1);
+      currentPosition += (clockwise ? 1 : -1);
     }
   }
 
-  // Modify position reporting in rotateWithAccel()
+  // Position reporting
   if (isHomed)
   {
     Serial.print("Move complete - Position: ");
@@ -150,10 +189,6 @@ void rotateWithAccel(bool clockwise, int steps)
     Serial.print(" steps (");
     Serial.print(currentPosition / STEPS_PER_MM);
     Serial.println(" mm)");
-  }
-  else
-  {
-    Serial.println("Move complete - Position unknown");
   }
 }
 
@@ -184,47 +219,122 @@ void homeAxis()
   Serial.println("Homing complete - Position: 0 steps (0 mm)");
 }
 
+// Add this function before loop()
+void moveToPosition(float targetMm)
+{
+  if (!isHomed)
+  {
+    Serial.println("Error: Please home axis first");
+    return;
+  }
+
+  long targetSteps = (long)(targetMm * STEPS_PER_MM);
+  if (targetSteps > MAX_POSITION || targetSteps < MIN_POSITION)
+  {
+    Serial.println("Error: Target position out of range");
+    return;
+  }
+
+  long stepsToMove = targetSteps - currentPosition;
+  if (stepsToMove == 0)
+  {
+    Serial.println("Already at target position");
+    return;
+  }
+
+  bool direction = stepsToMove > 0;
+  rotateWithAccel(direction, abs(stepsToMove));
+}
+void processCommand(String command)
+{
+  command.trim(); // Remove leading/trailing whitespace
+  char cmd = toupper(command[0]);
+  String param = command.substring(1); // Get everything after the command letter
+
+  switch (cmd)
+  {
+  case 'E': // Enable motor
+    digitalWrite(EN_PIN, LOW);
+    Serial.println("Motor enabled");
+    break;
+
+  case 'D': // Disable motor
+    digitalWrite(EN_PIN, HIGH);
+    Serial.println("Motor disabled");
+    break;
+
+  case 'C': // Clockwise rotation
+    Serial.println("Rotating clockwise 1 revolution");
+    rotateWithAccel(CLOCKWISE, TOTAL_STEPS);
+    break;
+
+  case 'R': // Counter-clockwise rotation
+    Serial.println("Rotating counter-clockwise 1 revolution");
+    rotateWithAccel(COUNTER_CLOCKWISE, TOTAL_STEPS);
+    break;
+
+  case 'H': // Home axis
+    homeAxis();
+    break;
+
+  case 'P': // Report current position
+    Serial.print("Current position: ");
+    Serial.print(currentPosition);
+    Serial.print(" steps (");
+    Serial.print(currentPosition / STEPS_PER_MM);
+    Serial.print(" mm), Homed: ");
+    Serial.println(isHomed ? "Yes" : "No");
+    break;
+
+  case 'G': // Go to position in mm
+    if (param.length() > 0)
+    {
+      float targetPos = param.toFloat();
+      if (targetPos >= MIN_POSITION_MM && targetPos <= MAX_POSITION_MM)
+      {
+        Serial.print("Moving to position: ");
+        Serial.print(targetPos);
+        Serial.println("mm");
+        moveToPosition(targetPos);
+      }
+      else
+      {
+        Serial.println("Error: Position out of range");
+      }
+    }
+    else
+    {
+      Serial.println("Error: Invalid position format");
+    }
+    break;
+
+  default:
+    Serial.println("Unknown command");
+    break;
+  }
+}
 void loop()
 {
-  if (Serial.available())
+  static String inputBuffer = "";
+
+  while (Serial.available())
   {
-    char cmd = Serial.read();
+    char c = Serial.read();
 
-    switch (toupper(cmd))
+    // Process on newline
+    if (c == '\n' || c == '\r')
     {
-    case 'E': // Enable motor
-      digitalWrite(EN_PIN, LOW);
-      Serial.println("Motor enabled");
-      break;
-
-    case 'D': // Disable motor
-      digitalWrite(EN_PIN, HIGH);
-      Serial.println("Motor disabled");
-      break;
-
-    case 'C': // Clockwise rotation
-      Serial.println("Rotating clockwise 1 revolution");
-      rotateWithAccel(CLOCKWISE, TOTAL_STEPS); // Changed to match direction definition
-      break;
-
-    case 'R': // Counter-clockwise rotation
-      Serial.println("Rotating counter-clockwise 1 revolution");
-      rotateWithAccel(COUNTER_CLOCKWISE, TOTAL_STEPS); // Changed to match direction definition
-      break;
-
-    case 'H': // Home axis
-      homeAxis();
-      break;
-
-    // Modify position reporting in loop() for 'P' command
-    case 'P': // Report current position
-      Serial.print("Current position: ");
-      Serial.print(currentPosition);
-      Serial.print(" steps (");
-      Serial.print(currentPosition / STEPS_PER_MM);
-      Serial.print(" mm), Homed: ");
-      Serial.println(isHomed ? "Yes" : "No");
-      break;
+      if (inputBuffer.length() > 0)
+      {
+        processCommand(inputBuffer);
+        inputBuffer = ""; // Clear buffer after processing
+      }
+    }
+    else
+    {
+      inputBuffer += c; // Add character to buffer
     }
   }
 }
+
+// Add this new function to handle command processing
