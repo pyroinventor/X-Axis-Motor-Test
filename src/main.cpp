@@ -1,15 +1,15 @@
 #include <Arduino.h>
 
 // Pin Definitions
-const int STEP_PIN = 26;       // PUL+ (Step positive)
-const int STEP_PIN_N = 14;     // PUL- (Step negative)
-const int DIR_PIN = 27;        // DIR+ (Direction positive)
-const int DIR_PIN_N = 12;      // DIR- (Direction negative)
-const int EN_PIN = 25;         // ENA+ (Enable positive)
-const int EN_PIN_N = 13;       // ENA- (Enable negative)
-const int LIMIT_SW = 33;       // NC Limit Switch pin
-const int HOME_BACKOFF = 500;  // Steps to back off after hitting limit
-const int HOMING_SPEED = 1000; // Microseconds between steps during homing
+const int STEP_PIN = 26;      // PUL+ (Step positive)
+const int STEP_PIN_N = 14;    // PUL- (Step negative)
+const int DIR_PIN = 27;       // DIR+ (Direction positive)
+const int DIR_PIN_N = 12;     // DIR- (Direction negative)
+const int EN_PIN = 25;        // ENA+ (Enable positive)
+const int EN_PIN_N = 13;      // ENA- (Enable negative)
+const int LIMIT_SW = 33;      // NC Limit Switch pin
+const int HOME_BACKOFF = 500; // Steps to back off after hitting limit
+const int HOMING_SPEED = 500; // Microseconds between steps during homing
 
 // Motor Configuration
 const int TOTAL_STEPS = 2000; // Set this to match your DIP switch setting (400-25000)
@@ -21,13 +21,13 @@ const long MAX_POSITION = 112000; // Maximum allowed position in steps (560mm)
 const long MIN_POSITION = 0;      // Minimum allowed position in steps
 
 // Motion Parameters
-const int STEP_DELAY_US = 200;        // Microseconds between steps (controls speed)
+const int STEP_DELAY_US = 100;        // Microseconds between steps (controls speed)
 const bool CLOCKWISE = true;          // Changed from false to true
 const bool COUNTER_CLOCKWISE = false; // Changed from true to false
 
-const int MIN_STEP_DELAY = 100;  // Minimum microseconds between steps (max speed)
-const int MAX_STEP_DELAY = 2000; // Maximum microseconds between steps (start speed)
-const int ACCEL_STEPS = 100;     // Number of steps for acceleration/deceleration
+const int MIN_STEP_DELAY = 200;  // 200us between steps at max speed (5000 steps/sec)
+const int MAX_STEP_DELAY = 2000; // 2000us between steps at start (500 steps/sec)
+const int ACCEL_STEPS = 2500;    // 2500 steps for acceleration (approximately 1 second)
 
 // Add after existing configuration constants
 const float STEPS_PER_MM = 200.0; // 2000 steps / 10mm = 200 steps/mm
@@ -113,31 +113,55 @@ void setDirection(bool clockwise)
   delayMicroseconds(10);
 }
 
-void step()
+// Modify step function to accept delay parameter
+void step(int delayUs = STEP_DELAY_US)
 {
   digitalWrite(STEP_PIN, HIGH);
   digitalWrite(STEP_PIN_N, LOW); // Complementary signal
   delayMicroseconds(10);         // Minimum pulse width for DM556
   digitalWrite(STEP_PIN, LOW);
   digitalWrite(STEP_PIN_N, HIGH); // Complementary signal
-  delayMicroseconds(STEP_DELAY_US);
+  delayMicroseconds(delayUs);     // Use passed-in delay value
 }
 
+// Add these helper functions above calculateStepDelay
+float cubicBezier(float t, float p0, float p1, float p2, float p3)
+{
+  float oneMinusT = 1.0f - t;
+  float oneMinusT2 = oneMinusT * oneMinusT;
+  float t2 = t * t;
+  return oneMinusT2 * oneMinusT * p0 +
+         3.0f * oneMinusT2 * t * p1 +
+         3.0f * oneMinusT * t2 * p2 +
+         t2 * t * p3;
+}
+
+// Replace the existing calculateStepDelay function
 int calculateStepDelay(int currentStep, int totalSteps)
 {
-  // Acceleration phase
+  // Control points for the Bezier curve (x coordinates)
+  const float p0 = 0.0f; // Start point
+  const float p1 = 0.5f; // First control point  (adjusted for slower initial acceleration)
+  const float p2 = 0.5f; // Second control point (adjusted for gradual speed increase)
+  const float p3 = 1.0f; // End point
+
   if (currentStep < ACCEL_STEPS)
   {
-    return map(currentStep, 0, ACCEL_STEPS, MAX_STEP_DELAY, MIN_STEP_DELAY);
+    // Acceleration phase
+    float t = (float)currentStep / ACCEL_STEPS;
+    float factor = cubicBezier(t, p0, p1, p2, p3);
+    return MAX_STEP_DELAY - (factor * (MAX_STEP_DELAY - MIN_STEP_DELAY));
   }
-  // Deceleration phase
   else if (currentStep > (totalSteps - ACCEL_STEPS))
   {
-    return map(totalSteps - currentStep, 0, ACCEL_STEPS, MAX_STEP_DELAY, MIN_STEP_DELAY);
+    // Deceleration phase
+    float t = (float)(totalSteps - currentStep) / ACCEL_STEPS;
+    float factor = cubicBezier(t, p0, p1, p2, p3);
+    return MAX_STEP_DELAY - (factor * (MAX_STEP_DELAY - MIN_STEP_DELAY));
   }
-  // Constant speed phase
   else
   {
+    // Constant speed phase
     return MIN_STEP_DELAY;
   }
 }
@@ -173,7 +197,7 @@ void rotateWithAccel(bool clockwise, int steps)
     }
 
     int stepDelay = calculateStepDelay(i, steps);
-    step();
+    step(stepDelay); // Pass the calculated delay to step function
 
     if (isHomed)
     {
@@ -202,7 +226,7 @@ void homeAxis()
   setDirection(COUNTER_CLOCKWISE); // Changed direction to match movement commands
   while (!isLimitTriggered())
   {
-    step();
+    step(HOMING_SPEED);
   }
 
   delay(500);
@@ -211,7 +235,7 @@ void homeAxis()
   setDirection(CLOCKWISE); // Changed direction to match movement commands
   for (int i = 0; i < HOME_BACKOFF; i++)
   {
-    step();
+    step(HOMING_SPEED);
   }
 
   currentPosition = 0;
