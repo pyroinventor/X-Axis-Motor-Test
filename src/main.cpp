@@ -25,9 +25,9 @@ const int STEP_DELAY_US = 100;        // Microseconds between steps (controls sp
 const bool CLOCKWISE = true;          // Changed from false to true
 const bool COUNTER_CLOCKWISE = false; // Changed from true to false
 
-const int MIN_STEP_DELAY = 200;  // 200us between steps at max speed (5000 steps/sec)
-const int MAX_STEP_DELAY = 2000; // 2000us between steps at start (500 steps/sec)
-const int ACCEL_STEPS = 2500;    // 2500 steps for acceleration (approximately 1 second)
+const int MIN_STEP_DELAY = 150;  // Increased for smoother motion
+const int MAX_STEP_DELAY = 2000; // Starting speed (unchanged)
+const int ACCEL_STEPS = 1000;    // Increased for longer acceleration period
 
 // Add after existing configuration constants
 const float STEPS_PER_MM = 200.0; // 2000 steps / 10mm = 200 steps/mm
@@ -139,11 +139,11 @@ float cubicBezier(float t, float p0, float p1, float p2, float p3)
 // Replace the existing calculateStepDelay function
 int calculateStepDelay(int currentStep, int totalSteps)
 {
-  // Control points for the Bezier curve (x coordinates)
-  const float p0 = 0.0f; // Start point
-  const float p1 = 0.5f; // First control point  (adjusted for slower initial acceleration)
-  const float p2 = 0.5f; // Second control point (adjusted for gradual speed increase)
-  const float p3 = 1.0f; // End point
+  // Control points for the Bezier curve - adjusted for more linear acceleration
+  const float p0 = 0.0f;  // Start point
+  const float p1 = 0.65f; // First control point moved up for more initial acceleration
+  const float p2 = 0.85f; // Second control point moved down for more linear curve
+  const float p3 = 1.0f;  // End point
 
   if (currentStep < ACCEL_STEPS)
   {
