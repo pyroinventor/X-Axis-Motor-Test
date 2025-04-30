@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "BluetoothSerial.h"
 
 // Pin Definitions
 const int STEP_PIN = 26;      // PUL+ (Step positive)
@@ -29,17 +30,19 @@ const int MIN_STEP_DELAY = 150;  // Increased for smoother motion
 const int MAX_STEP_DELAY = 2000; // Starting speed (unchanged)
 const int ACCEL_STEPS = 1000;    // Increased for longer acceleration period
 
-// Add after existing configuration constants
 const float STEPS_PER_MM = 200.0; // 2000 steps / 10mm = 200 steps/mm
 const float MAX_POSITION_MM = MAX_POSITION / STEPS_PER_MM;
 const float MIN_POSITION_MM = MIN_POSITION / STEPS_PER_MM;
 
-// Add at the top with other constants
 const int DEBOUNCE_DELAY = 50; // Increased debounce time to 50ms
+
+BluetoothSerial SerialBT;
+const char *BLUETOOTH_NAME = "X-Axis Controller";
 
 void setup()
 {
   Serial.begin(115200);
+  SerialBT.begin(BLUETOOTH_NAME);
 
   // Configure motor control pins
   pinMode(STEP_PIN, OUTPUT);
@@ -62,18 +65,19 @@ void setup()
   digitalWrite(EN_PIN, HIGH);  // Active LOW
   digitalWrite(EN_PIN_N, LOW); // Complementary to EN_PIN
 
-  Serial.println("Stepper Motor Test Program");
-  Serial.println("Commands:");
-  Serial.println("E: Enable motor");
-  Serial.println("D: Disable motor");
-  Serial.println("C: Rotate clockwise 1 revolution");
-  Serial.println("R: Rotate counter-clockwise 1 revolution");
-  Serial.println("H: Home axis"); // Add to command list
-  Serial.println("P: Report current position");
-  Serial.println("G<num>: Go to position in mm (e.g. G200)");
+  String startupMsg = "Stepper Motor Test Program\nCommands:\n"
+                      "E: Enable motor\n"
+                      "D: Disable motor\n"
+                      "C: Rotate clockwise 1 revolution\n"
+                      "R: Rotate counter-clockwise 1 revolution\n"
+                      "H: Home axis\n"
+                      "P: Report current position\n"
+                      "G<num>: Go to position in mm (e.g. G200)";
+
+  Serial.println(startupMsg);
+  SerialBT.println(startupMsg);
 }
 
-// Replace the existing isLimitTriggered function
 bool isLimitTriggered()
 {
   static bool lastState = false;
@@ -113,7 +117,6 @@ void setDirection(bool clockwise)
   delayMicroseconds(10);
 }
 
-// Modify step function to accept delay parameter
 void step(int delayUs = STEP_DELAY_US)
 {
   digitalWrite(STEP_PIN, HIGH);
@@ -124,7 +127,6 @@ void step(int delayUs = STEP_DELAY_US)
   delayMicroseconds(delayUs);     // Use passed-in delay value
 }
 
-// Add these helper functions above calculateStepDelay
 float cubicBezier(float t, float p0, float p1, float p2, float p3)
 {
   float oneMinusT = 1.0f - t;
@@ -136,7 +138,6 @@ float cubicBezier(float t, float p0, float p1, float p2, float p3)
          t2 * t * p3;
 }
 
-// Replace the existing calculateStepDelay function
 int calculateStepDelay(int currentStep, int totalSteps)
 {
   // Control points for the Bezier curve - adjusted for more linear acceleration
@@ -166,11 +167,16 @@ int calculateStepDelay(int currentStep, int totalSteps)
   }
 }
 
+void sendResponse(const String &message)
+{
+  Serial.println(message);
+  SerialBT.println(message);
+}
+
 void rotateWithAccel(bool clockwise, int steps)
 {
   // Debug output
-  Serial.print("Direction: ");
-  Serial.println(clockwise ? "CLOCKWISE" : "COUNTER_CLOCKWISE");
+  sendResponse("Direction: " + String(clockwise ? "CLOCKWISE" : "COUNTER_CLOCKWISE"));
 
   // Only check limits if we're homed
   if (isHomed)
@@ -178,7 +184,7 @@ void rotateWithAccel(bool clockwise, int steps)
     long targetPosition = currentPosition + (clockwise ? steps : -steps);
     if (targetPosition > MAX_POSITION || targetPosition < MIN_POSITION)
     {
-      Serial.println("Error: Movement would exceed limits");
+      sendResponse("Error: Movement would exceed limits");
       return;
     }
   }
@@ -216,7 +222,6 @@ void rotateWithAccel(bool clockwise, int steps)
   }
 }
 
-// Modify homing complete message
 void homeAxis()
 {
   Serial.println("Homing axis...");
@@ -243,7 +248,6 @@ void homeAxis()
   Serial.println("Homing complete - Position: 0 steps (0 mm)");
 }
 
-// Add this function before loop()
 void moveToPosition(float targetMm)
 {
   if (!isHomed)
@@ -269,6 +273,7 @@ void moveToPosition(float targetMm)
   bool direction = stepsToMove > 0;
   rotateWithAccel(direction, abs(stepsToMove));
 }
+
 void processCommand(String command)
 {
   command.trim(); // Remove leading/trailing whitespace
@@ -279,21 +284,21 @@ void processCommand(String command)
   {
   case 'E': // Enable motor
     digitalWrite(EN_PIN, LOW);
-    Serial.println("Motor enabled");
+    sendResponse("Motor enabled");
     break;
 
   case 'D': // Disable motor
     digitalWrite(EN_PIN, HIGH);
-    Serial.println("Motor disabled");
+    sendResponse("Motor disabled");
     break;
 
   case 'C': // Clockwise rotation
-    Serial.println("Rotating clockwise 1 revolution");
+    sendResponse("Rotating clockwise 1 revolution");
     rotateWithAccel(CLOCKWISE, TOTAL_STEPS);
     break;
 
   case 'R': // Counter-clockwise rotation
-    Serial.println("Rotating counter-clockwise 1 revolution");
+    sendResponse("Rotating counter-clockwise 1 revolution");
     rotateWithAccel(COUNTER_CLOCKWISE, TOTAL_STEPS);
     break;
 
@@ -302,12 +307,7 @@ void processCommand(String command)
     break;
 
   case 'P': // Report current position
-    Serial.print("Current position: ");
-    Serial.print(currentPosition);
-    Serial.print(" steps (");
-    Serial.print(currentPosition / STEPS_PER_MM);
-    Serial.print(" mm), Homed: ");
-    Serial.println(isHomed ? "Yes" : "No");
+    sendResponse("Current position: " + String(currentPosition) + " steps (" + String(currentPosition / STEPS_PER_MM) + " mm), Homed: " + (isHomed ? "Yes" : "No"));
     break;
 
   case 'G': // Go to position in mm
@@ -316,31 +316,32 @@ void processCommand(String command)
       float targetPos = param.toFloat();
       if (targetPos >= MIN_POSITION_MM && targetPos <= MAX_POSITION_MM)
       {
-        Serial.print("Moving to position: ");
-        Serial.print(targetPos);
-        Serial.println("mm");
+        sendResponse("Moving to position: " + String(targetPos) + "mm");
         moveToPosition(targetPos);
       }
       else
       {
-        Serial.println("Error: Position out of range");
+        sendResponse("Error: Position out of range");
       }
     }
     else
     {
-      Serial.println("Error: Invalid position format");
+      sendResponse("Error: Invalid position format");
     }
     break;
 
   default:
-    Serial.println("Unknown command");
+    sendResponse("Unknown command");
     break;
   }
 }
+
 void loop()
 {
-  static String inputBuffer = "";
+  static String usbBuffer = "";
+  static String btBuffer = "";
 
+  // Handle USB Serial
   while (Serial.available())
   {
     char c = Serial.read();
@@ -348,17 +349,33 @@ void loop()
     // Process on newline
     if (c == '\n' || c == '\r')
     {
-      if (inputBuffer.length() > 0)
+      if (usbBuffer.length() > 0)
       {
-        processCommand(inputBuffer);
-        inputBuffer = ""; // Clear buffer after processing
+        processCommand(usbBuffer);
+        usbBuffer = ""; // Clear buffer after processing
       }
     }
     else
     {
-      inputBuffer += c; // Add character to buffer
+      usbBuffer += c; // Add character to buffer
+    }
+  }
+
+  // Handle Bluetooth Serial
+  while (SerialBT.available())
+  {
+    char c = SerialBT.read();
+    if (c == '\n' || c == '\r')
+    {
+      if (btBuffer.length() > 0)
+      {
+        processCommand(btBuffer);
+        btBuffer = "";
+      }
+    }
+    else
+    {
+      btBuffer += c;
     }
   }
 }
-
-// Add this new function to handle command processing
