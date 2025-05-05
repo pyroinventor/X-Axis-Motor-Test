@@ -2,13 +2,13 @@
 #include "BluetoothSerial.h"
 
 // Pin Definitions
-const int STEP_PIN = 26;      // PUL+ (Step positive)
-const int STEP_PIN_N = 14;    // PUL- (Step negative)
-const int DIR_PIN = 27;       // DIR+ (Direction positive)
-const int DIR_PIN_N = 12;     // DIR- (Direction negative)
-const int EN_PIN = 25;        // ENA+ (Enable positive)
-const int EN_PIN_N = 13;      // ENA- (Enable negative)
-const int LIMIT_SW = 33;      // NC Limit Switch pin
+const int STEP_PIN = 23;      // PUL+ (Step positive)
+const int STEP_PIN_N = 22;    // PUL- (Step negative)
+const int DIR_PIN = 21;       // DIR+ (Direction positive)
+const int DIR_PIN_N = 19;     // DIR- (Direction negative)
+const int EN_PIN = 18;        // ENA+ (Enable positive)
+const int EN_PIN_N = 5;       // ENA- (Enable negative)
+const int LIMIT_SW = 4;       // NC Limit Switch pin
 const int HOME_BACKOFF = 500; // Steps to back off after hitting limit
 const int HOMING_SPEED = 500; // Microseconds between steps during homing
 
