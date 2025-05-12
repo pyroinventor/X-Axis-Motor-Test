@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#include "BluetoothSerial.h"
 
 // Pin Definitions
 const int STEP_PIN = 23;      // PUL+ (Step positive)
@@ -36,13 +35,9 @@ const float MIN_POSITION_MM = MIN_POSITION / STEPS_PER_MM;
 
 const int DEBOUNCE_DELAY = 50; // Increased debounce time to 50ms
 
-BluetoothSerial SerialBT;
-const char *BLUETOOTH_NAME = "X-Axis Controller";
-
 void setup()
 {
   Serial.begin(115200);
-  SerialBT.begin(BLUETOOTH_NAME);
 
   // Configure motor control pins
   pinMode(STEP_PIN, OUTPUT);
@@ -75,7 +70,6 @@ void setup()
                       "G<num>: Go to position in mm (e.g. G200)";
 
   Serial.println(startupMsg);
-  SerialBT.println(startupMsg);
 }
 
 bool isLimitTriggered()
@@ -170,7 +164,6 @@ int calculateStepDelay(int currentStep, int totalSteps)
 void sendResponse(const String &message)
 {
   Serial.println(message);
-  SerialBT.println(message);
 }
 
 void rotateWithAccel(bool clockwise, int steps)
@@ -358,24 +351,6 @@ void loop()
     else
     {
       usbBuffer += c; // Add character to buffer
-    }
-  }
-
-  // Handle Bluetooth Serial
-  while (SerialBT.available())
-  {
-    char c = SerialBT.read();
-    if (c == '\n' || c == '\r')
-    {
-      if (btBuffer.length() > 0)
-      {
-        processCommand(btBuffer);
-        btBuffer = "";
-      }
-    }
-    else
-    {
-      btBuffer += c;
     }
   }
 }
